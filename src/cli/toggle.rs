@@ -71,7 +71,7 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
         if create_only {
             return 0;
         }
-        let _ = tmux::run_tmux(&["kill-pane", "-t", &sidebar_pane]);
+        close_sidebar(window_id, &sidebar_pane);
         return 0;
     }
 
@@ -97,6 +97,10 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| "tmux-agent-sidebar".to_string());
 
+    // Snapshot the layout BEFORE the split mutates it, so closing the
+    // sidebar can restore the exact pre-sidebar pane geometry.
+    let prev_layout = tmux::display_message(window_id, "#{window_layout}");
+
     // Create sidebar pane
     let sidebar_pane = tmux::run_tmux(&[
         "split-window",
@@ -117,6 +121,16 @@ pub(crate) fn cmd_toggle(args: &[String]) -> i32 {
 
     if !sidebar_pane.is_empty() {
         tmux::set_pane_option(&sidebar_pane, tmux::PANE_ROLE, "sidebar");
+        if !prev_layout.is_empty() {
+            let _ = tmux::run_tmux(&[
+                "set-option",
+                "-w",
+                "-t",
+                window_id,
+                tmux::SIDEBAR_PREV_LAYOUT,
+                &prev_layout,
+            ]);
+        }
     }
 
     // Restore focus
@@ -136,12 +150,12 @@ pub(crate) fn cmd_toggle_all(_args: &[String]) -> i32 {
         .unwrap_or(false);
 
     if has_sidebar {
-        let all_panes =
-            tmux::run_tmux(&["list-panes", "-a", "-F", &pane_id_role_format]).unwrap_or_default();
+        let all_panes = tmux::run_tmux(&["list-panes", "-a", "-F", &window_pane_id_role_format()])
+            .unwrap_or_default();
         for line in all_panes.lines() {
-            let parts: Vec<&str> = line.splitn(2, '|').collect();
-            if parts.len() >= 2 && parts[1] == "sidebar" {
-                let _ = tmux::run_tmux(&["kill-pane", "-t", parts[0]]);
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            if parts.len() >= 3 && parts[2] == "sidebar" {
+                close_sidebar(parts[0], parts[1]);
             }
         }
     } else {
@@ -344,6 +358,44 @@ pub(crate) fn cmd_auto_close(args: &[String]) -> i32 {
 
 fn pane_id_role_format() -> String {
     format!("#{{pane_id}}|#{{{}}}", tmux::PANE_ROLE)
+}
+
+fn window_pane_id_role_format() -> String {
+    format!("#{{window_id}}|#{{pane_id}}|#{{{}}}", tmux::PANE_ROLE)
+}
+
+/// Close the sidebar pane `sidebar_pane` in `window_id` and restore the
+/// pane layout captured when the sidebar was opened.
+///
+/// `kill-pane` hands the freed space to the pane adjacent to the sidebar
+/// instead of re-flowing the layout, so an open/close cycle otherwise
+/// leaks the sidebar's width into one neighbour pane — an even 50/50
+/// split comes back uneven and drifts further on every cycle. The
+/// `@sidebar_prev_layout` window option written at creation time lets us
+/// `select-layout` the exact original geometry back.
+///
+/// Restoring is best-effort: when the saved layout no longer matches the
+/// window (panes opened/closed while the sidebar was up, or the sidebar
+/// was the last pane and `kill-pane` destroyed the window), the
+/// `select-layout` call fails and we fall back to tmux's default
+/// behaviour. The saved option is cleared afterwards either way so a
+/// stale layout never survives into a later close.
+fn close_sidebar(window_id: &str, sidebar_pane: &str) {
+    let prev_layout =
+        tmux::display_message(window_id, &format!("#{{{}}}", tmux::SIDEBAR_PREV_LAYOUT));
+    let _ = tmux::run_tmux(&["kill-pane", "-t", sidebar_pane]);
+    if prev_layout.is_empty() {
+        return;
+    }
+    let _ = tmux::run_tmux(&["select-layout", "-t", window_id, &prev_layout]);
+    let _ = tmux::run_tmux(&[
+        "set-option",
+        "-w",
+        "-u",
+        "-t",
+        window_id,
+        tmux::SIDEBAR_PREV_LAYOUT,
+    ]);
 }
 
 #[cfg(test)]

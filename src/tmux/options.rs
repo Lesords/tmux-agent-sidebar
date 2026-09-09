@@ -84,6 +84,12 @@ pub const PANE_WORKTREE_NAME: &str = "@pane_worktree_name";
 
 pub const SIDEBAR_PID: &str = "@sidebar_pid";
 pub const SIDEBAR_WIDTH: &str = "@sidebar_width";
+/// Window-scoped `#{window_layout}` snapshot captured right before the
+/// sidebar pane is created. Closing the sidebar `select-layout`s this
+/// string back so the pre-sidebar pane geometry (e.g. an even 50/50
+/// split) survives the open/close cycle — `kill-pane` alone hands the
+/// freed space to one adjacent pane and destroys it.
+pub const SIDEBAR_PREV_LAYOUT: &str = "@sidebar_prev_layout";
 pub const SIDEBAR_POSITION: &str = "@sidebar_position";
 pub const SIDEBAR_FILTER: &str = "@sidebar_filter";
 pub const SIDEBAR_CURSOR: &str = "@sidebar_cursor";
