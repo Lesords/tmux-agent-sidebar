@@ -87,6 +87,34 @@ cargo build --release
 
 Toggle the sidebar off → on to pick up the new binary.
 
+### Putting the binary into `bin/`
+
+`cargo build` only writes to `target/` — the plugin resolves the binary as
+`bin/` > `target/release/` > `PATH`, so a local build is picked up from
+`target/release/` only when no `bin/tmux-agent-sidebar` exists. To install a
+local build into `bin/` (same thing the install wizard's "Build from source"
+does), use either method from the repo root:
+
+Method 1 — via the install wizard (builds, copies, kills running instances,
+and reloads tmux config):
+
+```sh
+bash install-wizard.sh build-from-source
+```
+
+Method 2 — manual steps (equivalent to what the wizard runs):
+
+```sh
+cargo build --release
+mkdir -p bin
+cp target/release/tmux-agent-sidebar bin/tmux-agent-sidebar
+chmod +x bin/tmux-agent-sidebar
+pkill -f "bin/tmux-agent-sidebar" 2>/dev/null; true
+```
+
+Verify with `bin/tmux-agent-sidebar --version` (should match `Cargo.toml`),
+then toggle the sidebar off → on.
+
 ### Picking up local builds for the Claude Code plugin
 
 If you also installed this as a Claude Code plugin (`/plugin`), its install path
