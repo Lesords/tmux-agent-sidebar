@@ -40,6 +40,15 @@ pub(crate) fn cmd_hook(args: &[String]) -> i32 {
 // ─── event handler ──────────────────────────────────────────────────────────
 
 fn handle_event(pane: &str, agent_name: &str, event: AgentEvent) -> i32 {
+    // Occupancy guard: hooks fire with the environment of whatever process
+    // invoked the agent binary — e.g. a `claude -p` run from another
+    // agent's Bash tool inherits $TMUX_PANE and would otherwise flip this
+    // pane's identity/cwd/status until the real session's next event.
+    // While the pane's own session is live, foreign-session events are
+    // dropped whole.
+    if context::pane_claimed_by_live_session(pane, event.session_id()) {
+        return 0;
+    }
     match event {
         AgentEvent::SessionStart {
             agent,
@@ -54,7 +63,7 @@ fn handle_event(pane: &str, agent_name: &str, event: AgentEvent) -> i32 {
             &context::make_ctx(&agent, &cwd, &permission_mode, &worktree, &session_id),
             &source,
         ),
-        AgentEvent::SessionEnd { end_reason } => {
+        AgentEvent::SessionEnd { end_reason, .. } => {
             let notifications = notification_settings();
             handlers::on_session_end(pane, agent_name, &end_reason, &notifications)
         }

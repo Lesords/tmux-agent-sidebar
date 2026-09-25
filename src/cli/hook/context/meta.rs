@@ -43,6 +43,29 @@ pub(in crate::cli::hook) fn set_agent_meta(pane: &str, ctx: &AgentContext<'_>) {
     sync_pane_location(pane, ctx.cwd, ctx.worktree, ctx.session_id);
 }
 
+/// Whether the pane is already claimed by a different, still-live session.
+/// Used by the hook dispatch to drop events fired by a process that merely
+/// inherited `$TMUX_PANE`. Events without a session id (subagent markers,
+/// activity logs, codex/opencode payloads lacking one) are never blocked.
+pub(in crate::cli::hook) fn pane_claimed_by_live_session(
+    pane: &str,
+    event_sid: Option<&str>,
+) -> bool {
+    pane_claimed_with(pane, event_sid, crate::session::session_alive)
+}
+
+fn pane_claimed_with(
+    pane: &str,
+    event_sid: Option<&str>,
+    session_alive: impl Fn(&str) -> bool,
+) -> bool {
+    let Some(event_sid) = event_sid.filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let existing = tmux::get_pane_option_value(pane, tmux::PANE_SESSION_ID);
+    !existing.is_empty() && existing != event_sid && session_alive(&existing)
+}
+
 pub(in crate::cli::hook) fn clear_run_state(pane: &str) {
     tmux::unset_pane_option(pane, tmux::PANE_STARTED_AT);
     tmux::unset_pane_option(pane, tmux::PANE_WAIT_REASON);
@@ -301,5 +324,27 @@ mod tests {
                 "expected {key} cleared"
             );
         }
+    }
+
+    #[test]
+    fn pane_claimed_blocks_foreign_sid_only_while_owner_alive() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%CLAIMED";
+        tmux::test_mock::set(pane, tmux::PANE_SESSION_ID, "owner-sid");
+        let owner_alive = |sid: &str| sid == "owner-sid";
+
+        // foreign session while the owner is live → blocked
+        assert!(pane_claimed_with(pane, Some("intruder-sid"), owner_alive));
+        // the owner's own events always pass
+        assert!(!pane_claimed_with(pane, Some("owner-sid"), owner_alive));
+        // owner crashed → a new session may take the pane over
+        assert!(!pane_claimed_with(pane, Some("intruder-sid"), |_| false));
+        // events without a session id never block (subagents, codex)
+        assert!(!pane_claimed_with(pane, None, owner_alive));
+        assert!(!pane_claimed_with(pane, Some(""), owner_alive));
+
+        // an unregistered pane can be claimed by anyone
+        let bare = "%UNCLAIMED";
+        assert!(!pane_claimed_with(bare, Some("any-sid"), |_| true));
     }
 }

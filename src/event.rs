@@ -31,6 +31,7 @@ pub enum AgentEvent {
     },
     SessionEnd {
         end_reason: String,
+        session_id: Option<String>,
     },
     UserPromptSubmit {
         agent: String,
@@ -141,6 +142,24 @@ impl AgentEvent {
             Self::TeammateIdle { .. } => AgentEventKind::TeammateIdle,
             Self::WorktreeCreate => AgentEventKind::WorktreeCreate,
             Self::WorktreeRemove { .. } => AgentEventKind::WorktreeRemove,
+        }
+    }
+
+    /// Session id for events that carry one; `None` for the rest (subagent
+    /// markers, activity logs). The hook dispatch uses this for the
+    /// occupancy guard: while a pane's own session is live, events from a
+    /// foreign session id are dropped.
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::SessionStart { session_id, .. }
+            | Self::SessionEnd { session_id, .. }
+            | Self::UserPromptSubmit { session_id, .. }
+            | Self::Notification { session_id, .. }
+            | Self::Stop { session_id, .. }
+            | Self::StopFailure { session_id, .. }
+            | Self::PermissionDenied { session_id, .. }
+            | Self::CwdChanged { session_id, .. } => session_id.as_deref(),
+            _ => None,
         }
     }
 }

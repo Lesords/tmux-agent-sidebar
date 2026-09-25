@@ -46,7 +46,8 @@ fn session_end() {
     assert_eq!(
         adapter.parse("session-end", &json!({})).unwrap(),
         AgentEvent::SessionEnd {
-            end_reason: "".into()
+            end_reason: "".into(),
+            session_id: None
         }
     );
 }
@@ -60,7 +61,8 @@ fn session_end_captures_reason() {
     assert_eq!(
         event,
         AgentEvent::SessionEnd {
-            end_reason: "logout".into()
+            end_reason: "logout".into(),
+            session_id: None
         }
     );
 }

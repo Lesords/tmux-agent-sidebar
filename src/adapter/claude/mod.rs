@@ -143,6 +143,7 @@ impl EventAdapter for ClaudeAdapter {
             }),
             "session-end" => Some(AgentEvent::SessionEnd {
                 end_reason: json_str(input, "end_reason").into(),
+                session_id: optional_str(input, "session_id"),
             }),
             "user-prompt-submit" => Some(AgentEvent::UserPromptSubmit {
                 agent: CLAUDE_AGENT.into(),
