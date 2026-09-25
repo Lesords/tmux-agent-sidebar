@@ -115,7 +115,7 @@ mod tests {
         let _ = fs::create_dir_all(log_path.parent().unwrap());
         fs::write(&log_path, "1234567890|Read|main.rs\n").unwrap();
 
-        on_session_end(pane, "claude", "", &default_notifications());
+        on_session_end(pane, "claude", "", None, &default_notifications());
         assert!(
             !tmux::test_mock::contains(pane, PENDING_SESSION_END),
             "child SessionEnd must not record a pending teardown"

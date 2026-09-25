@@ -63,9 +63,19 @@ fn handle_event(pane: &str, agent_name: &str, event: AgentEvent) -> i32 {
             &context::make_ctx(&agent, &cwd, &permission_mode, &worktree, &session_id),
             &source,
         ),
-        AgentEvent::SessionEnd { end_reason, .. } => {
+        AgentEvent::SessionEnd {
+            end_reason,
+            session_id,
+            ..
+        } => {
             let notifications = notification_settings();
-            handlers::on_session_end(pane, agent_name, &end_reason, &notifications)
+            handlers::on_session_end(
+                pane,
+                agent_name,
+                &end_reason,
+                session_id.as_deref(),
+                &notifications,
+            )
         }
         AgentEvent::UserPromptSubmit {
             agent,

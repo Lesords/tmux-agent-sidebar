@@ -50,8 +50,38 @@ pub(in crate::cli::hook) fn on_session_end(
     pane: &str,
     agent_name: &str,
     end_reason: &str,
+    session_id: Option<&str>,
     notifications: &desktop_notification::DesktopNotificationSettings,
 ) -> i32 {
+    on_session_end_with(
+        pane,
+        agent_name,
+        end_reason,
+        session_id,
+        crate::session::session_alive,
+        notifications,
+    )
+}
+
+fn on_session_end_with(
+    pane: &str,
+    agent_name: &str,
+    end_reason: &str,
+    session_id: Option<&str>,
+    session_alive: impl Fn(&str) -> bool,
+    notifications: &desktop_notification::DesktopNotificationSettings,
+) -> i32 {
+    // A SessionEnd whose session process is still alive is an in-process
+    // end (`prompt_input_exit`, `/clear`, …) — the agent keeps running, so
+    // the pane must keep its registration; the next event refreshes it.
+    // Only a dead process (or an unknown sid: codex/opencode) tears down.
+    // Tradeoff: a real exit briefly races the process disappearing, which
+    // can leave a short-lived stale registration — the readers' own
+    // staleness checks clean that up, whereas wiping a live agent here
+    // needs a manual prompt in that pane to recover from.
+    if session_id.is_some_and(|sid| session_alive(sid)) {
+        return 0;
+    }
     // Subagents share the parent's `$TMUX_PANE`, so a SessionEnd fired
     // while `@pane_subagents` is populated is almost certainly a child's
     // (we have no way to distinguish parent vs. child events otherwise).
@@ -131,7 +161,7 @@ mod tests {
         let _ = fs::create_dir_all(log_path.parent().unwrap());
         fs::write(&log_path, "1234567890|Read|main.rs\n").unwrap();
 
-        let exit = on_session_end(pane, "claude", "", &default_notifications());
+        let exit = on_session_end(pane, "claude", "", None, &default_notifications());
 
         assert_eq!(exit, 0);
         assert!(
@@ -162,7 +192,7 @@ mod tests {
         tmux::test_mock::set(pane, tmux::PANE_CWD, "/repo");
         tmux::test_mock::set(pane, tmux::PANE_STATUS, "running");
 
-        let exit = on_session_end(pane, "claude", "", &default_notifications());
+        let exit = on_session_end(pane, "claude", "", None, &default_notifications());
 
         assert_eq!(exit, 0);
         assert!(
@@ -300,7 +330,7 @@ mod tests {
     fn on_session_end_routine_reason_does_not_notify() {
         let _guard = tmux::test_mock::install();
         let pane = "%END_ROUTINE";
-        on_session_end(pane, "claude", "clear", &notifications_enabled_all());
+        on_session_end(pane, "claude", "clear", None, &notifications_enabled_all());
         // The notification helper writes a dedup stamp only when a notification
         // actually goes out; a missing stamp is proof the gate rejected it.
         assert!(
@@ -322,6 +352,7 @@ mod tests {
             pane,
             "cargo-test: on_session_end_logout",
             "logout",
+            None,
             &notifications_enabled_all(),
         );
         // If `send_desktop_notification` succeeds (local dev with notify-send
@@ -348,6 +379,7 @@ mod tests {
             pane,
             "cargo-test: on_session_end_bypass_disabled",
             "bypass_permissions_disabled",
+            None,
             &notifications_enabled_all(),
         );
         let stamp_key = tmux::PANE_OS_NOTIFY_TASK_COMPLETED;
@@ -358,5 +390,61 @@ mod tests {
                 "stamp must record the session-end fingerprint, got {raw}"
             );
         }
+    }
+
+    #[test]
+    fn on_session_end_skips_teardown_while_session_process_alive() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%LIVE_END";
+        tmux::test_mock::set(pane, tmux::PANE_AGENT, "claude");
+        tmux::test_mock::set(pane, tmux::PANE_CWD, "/repo");
+        tmux::test_mock::set(pane, tmux::PANE_SESSION_ID, "live-session");
+        tmux::test_mock::set(pane, tmux::PANE_STATUS, "idle");
+        let log_path = crate::activity::log_file_path(pane);
+        let _ = fs::create_dir_all(log_path.parent().unwrap());
+        fs::write(&log_path, "1234567890|Read|main.rs\n").unwrap();
+
+        // In-process end (prompt_input_exit) with the process still alive.
+        let exit = on_session_end_with(
+            pane,
+            "claude",
+            "prompt_input_exit",
+            Some("live-session"),
+            |sid| sid == "live-session",
+            &default_notifications(),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(
+            tmux::test_mock::contains(pane, tmux::PANE_AGENT),
+            "in-process end must keep @pane_agent"
+        );
+        assert!(tmux::test_mock::contains(pane, tmux::PANE_SESSION_ID));
+        assert!(
+            log_path.exists(),
+            "in-process end must not delete the activity log"
+        );
+        fs::remove_file(&log_path).ok();
+    }
+
+    #[test]
+    fn on_session_end_tears_down_when_process_dead() {
+        let _guard = tmux::test_mock::install();
+        let pane = "%DEAD_END";
+        tmux::test_mock::set(pane, tmux::PANE_AGENT, "claude");
+        tmux::test_mock::set(pane, tmux::PANE_SESSION_ID, "gone-session");
+
+        let exit = on_session_end_with(
+            pane,
+            "claude",
+            "logout",
+            Some("gone-session"),
+            |_| false,
+            &default_notifications(),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(!tmux::test_mock::contains(pane, tmux::PANE_AGENT));
+        assert!(!tmux::test_mock::contains(pane, tmux::PANE_SESSION_ID));
     }
 }
