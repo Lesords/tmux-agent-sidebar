@@ -4,6 +4,7 @@ use crate::ui::colors::ColorTheme;
 use crate::ui::icons::StatusIcons;
 
 mod activity;
+mod dialog_watch;
 mod filter;
 mod focus;
 mod global;

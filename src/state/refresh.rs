@@ -144,8 +144,28 @@ impl AppState {
         // The loop is a pane iteration plus HashMap lookups — cheap
         // enough to run every tick.
         self.refresh_session_names();
+        self.promote_screen_waiting();
         self.refresh_activity_data();
         window_active
+    }
+
+    /// Flip Running panes to Waiting when a permission dialog is already
+    /// painted at the screen bottom (see `state::dialog_watch`). Writes
+    /// the same pane options the hook CLI owns — the later Notification
+    /// write is idempotent — so every @pane_status reader sees waiting
+    /// ~5s earlier than the hook alone.
+    fn promote_screen_waiting(&mut self) {
+        for group in &mut self.repo_groups {
+            for (pane, _) in &mut group.panes {
+                if pane.status == PaneStatus::Running
+                    && super::dialog_watch::pane_shows_dialog(&pane.pane_id)
+                {
+                    tmux::set_pane_option(&pane.pane_id, tmux::PANE_STATUS, "waiting");
+                    tmux::set_pane_option(&pane.pane_id, tmux::PANE_ATTENTION, "notification");
+                    pane.status = PaneStatus::Waiting;
+                }
+            }
+        }
     }
 
     /// Apply the current `session_id → name` map to each pane so the
